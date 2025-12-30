@@ -1,151 +1,198 @@
--- Data Quality Check and Exploration
+/********************************************************************************************
+ QUALITY CHECKS – SILVER LAYER
+ DESCRIPTION :
+     This script performs data quality validation on all SILVER layer tables.
+     It checks for:
+       - NULL or duplicate primary keys
+       - Unwanted spaces in string fields
+       - Data standardization & consistency
+       - Invalid or out-of-range values
+       - Business rule violations
 
+ USAGE NOTES :
+     - Run AFTER Silver Layer load completes
+     - Investigate and resolve any returned records
+********************************************************************************************/
+
+
+/* ==========================================================================================
+   CUSTOMER DIMENSION : silver.crm_cust_info
+========================================================================================== */
+
+-- Check for NULLs or duplicate primary keys
 SELECT
-	cst_id,
-	COUNT(*)
-FROM
-		silver.crm_cust_info
-GROUP BY
-	cst_id
-HAVING
-	COUNT(*) > 1 OR cst_id IS NULL
+    cst_id,
+    COUNT(*) AS record_count
+FROM silver.crm_cust_info
+GROUP BY cst_id
+HAVING COUNT(*) > 1 OR cst_id IS NULL;
 
 
-	-- Check for unwanted Spaces
+-- Check for unwanted spaces in first name
 SELECT
-	cst_firstname
-FROM
-	silver.crm_cust_info
-WHERE
-	cst_firstname != TRIM(cst_firstname)
+    cst_firstname
+FROM silver.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname);
 
 
--- DATA standardization & Consistency
-
-SELECT DISTINCT cst_gndr
-FROM
-	silver.crm_cust_info
-
-
-SELECT * FROM silver.crm_cust_info
+-- Data standardization – Gender values
+SELECT DISTINCT
+    cst_gndr
+FROM silver.crm_cust_info;
 
 
-
--- Checking for Nulls and duplicates in the primary key
-
-
-SELECT
-	prd_id,
-	COUNT(*)
-FROM		
-	bronze.crm_prd_info
-GROUP BY
-	prd_id
-HAVING
-	COUNT(*) > 1 OR prd_id IS NULL
+-- Data standardization – Marital status values
+SELECT DISTINCT
+    cst_marital_status
+FROM silver.crm_cust_info;
 
 
+/* ==========================================================================================
+   PRODUCT DIMENSION : silver.crm_prd_info
+========================================================================================== */
+
+-- Check for NULLs or duplicate primary keys
 SELECT
     prd_id,
-    prd_key,
-    prd_nm,
-    prd_cost,
-    prd_line,
+    COUNT(*) AS record_count
+FROM silver.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1 OR prd_id IS NULL;
+
+
+-- Check for NULL or negative product cost
+SELECT
+    prd_id,
+    prd_cost
+FROM silver.crm_prd_info
+WHERE prd_cost IS NULL OR prd_cost < 0;
+
+
+-- Check for invalid date ranges
+SELECT
+    prd_id,
     prd_start_dt,
     prd_end_dt
-FROM bronze.crm_prd_info;
+FROM silver.crm_prd_info
+WHERE prd_end_dt IS NOT NULL
+  AND prd_end_dt < prd_start_dt;
 
 
--- CHECK for NULLs or Negative Numbers
-
-SELECT prd_cost
-FROM
-	bronze.crm_prd_info
-WHERE prd_cost < 0 OR prd_cost IS NULL
-
-
-
--- sales quality check
--- sales = Quantity * Price
--- Values must not be NULL, zero, or negative
-
-
+-- Data standardization – Product line
 SELECT DISTINCT
-    sls_sales AS old_sls_sales,
+    prd_line
+FROM silver.crm_prd_info;
+
+
+/* ==========================================================================================
+   SALES FACT : silver.crm_sales_details
+========================================================================================== */
+
+-- Business rule check: Sales = Quantity * Price
+-- Values must not be NULL, zero, or negative
+SELECT DISTINCT
+    sls_sales,
     sls_quantity,
-    sls_price AS old_sls_price
+    sls_price
 FROM silver.crm_sales_details
-WHERE 
-    TRY_CAST(sls_sales AS INT) 
-        != TRY_CAST(sls_quantity AS INT) 
-           * TRY_CAST(sls_price AS INT)
-    OR sls_sales IS NULL
+WHERE
+    sls_sales IS NULL
     OR sls_quantity IS NULL
     OR sls_price IS NULL
-    OR TRY_CAST(sls_sales AS INT) <= 0
-    OR TRY_CAST(sls_quantity AS INT) <= 0
-    OR TRY_CAST(sls_price AS INT) <= 0
+    OR sls_sales <= 0
+    OR sls_quantity <= 0
+    OR sls_price <= 0
+    OR sls_sales != sls_quantity * sls_price
 ORDER BY sls_sales;
 
 
+-- Check for invalid date order
+SELECT
+    sls_ord_num,
+    sls_order_dt,
+    sls_ship_dt,
+    sls_due_dt
+FROM silver.crm_sales_details
+WHERE
+    sls_ship_dt < sls_order_dt
+    OR sls_due_dt < sls_order_dt;
 
--- identify Out-of-range DATES
 
+/* ==========================================================================================
+   ERP CUSTOMER : silver.erp_cust_az12
+========================================================================================== */
+
+-- Check for NULL primary keys
+SELECT
+    cid
+FROM silver.erp_cust_az12
+WHERE cid IS NULL;
+
+
+-- Check for out-of-range birth dates
 SELECT DISTINCT
     bdate
-FROM
-    bronze.erp_cust_az12
-WHERE 
-    bdate < '1924-01-01' OR bdate > GETDATE()
+FROM silver.erp_cust_az12
+WHERE bdate < '1924-01-01'
+   OR bdate > GETDATE();
 
 
--- Data Standardization & Consistency
+-- Data standardization – Gender values
 SELECT DISTINCT
-gen
-FROM
-    bronze.erp_cust_az12
+    gen
+FROM silver.erp_cust_az12;
 
 
+/* ==========================================================================================
+   ERP LOCATION : silver.erp_loc_a101
+========================================================================================== */
 
+-- Check for NULL customer IDs
 SELECT
-    REPLACE(cid, '-', '') cid,
-    CASE
-        WHEN TRIM(cntry) = 'DE' THEN 'Germany'
-        WHEN TRIM(cntry) IN ('US', 'USA') THEN 'United States'
-        WHEN TRIM(cntry) = '' OR cntry IS NULL THEN 'n/a'
-        ELSE TRIM(cntry)
-    END AS cntry
-FROM
-    bronze.erp_loc_a101
+    cid
+FROM silver.erp_loc_a101
+WHERE cid IS NULL;
 
 
-
--- DATA Standardization & Consistency
-
-SELECT DISTINCT cntry
-FROM bronze.erp_loc_a101
-ORDER BY cntry
-
-
-
-
-
-SELECT
-    id,
-    cat,
-    subcat,
-    maintenance
-FROM
-    bronze.erp_px_cat_g1v2
-
-
--- CHECK FOR unwanted Spaces
-
-SELECT * FROM bronze.erp_px_cat_g1v2
-WHERE cat != TRIM(Cat)
-
--- Data Standardization & Consistency
-
+-- Data standardization – Country values
 SELECT DISTINCT
-cat
-FROM bronze.erp_px_cat_g1v2
+    cntry
+FROM silver.erp_loc_a101
+ORDER BY cntry;
+
+
+-- Check for unwanted spaces
+SELECT *
+FROM silver.erp_loc_a101
+WHERE cntry != TRIM(cntry);
+
+
+/* ==========================================================================================
+   ERP PRODUCT CATEGORY : silver.erp_px_cat_g1v2
+========================================================================================== */
+
+-- Check for NULL IDs
+SELECT
+    id
+FROM silver.erp_px_cat_g1v2
+WHERE id IS NULL;
+
+
+-- Check for unwanted spaces
+SELECT *
+FROM silver.erp_px_cat_g1v2
+WHERE cat != TRIM(cat)
+   OR subcat != TRIM(subcat)
+   OR maintenance != TRIM(maintenance);
+
+
+-- Data standardization – Category values
+SELECT DISTINCT
+    cat
+FROM silver.erp_px_cat_g1v2;
+
+
+-- Data standardization – Subcategory values
+SELECT DISTINCT
+    subcat
+FROM silver.erp_px_cat_g1v2;
